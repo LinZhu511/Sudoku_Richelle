@@ -150,7 +150,11 @@ public class SudokuView extends JFrame implements Observer {
                     Color bg;
                     if (fixed) {
                         bg = new Color(235, 235, 235);
-                    } else if (model.isHighlightErrors() && v != 0 && !model.isValid(r, c, v)) {
+                    } else if (model.isHighlightErrors()
+                            && v != 0
+                            && (!model.isValid(r, c, v) || model.isWrongByAnswer(r, c))
+                            && model.isLastEditedCell(r, c)) {
+                        // 既标记规则冲突，也标记“当前不冲突但与标准答案不一致”
                         bg = new Color(255, 200, 200);
                     } else {
                         bg = Color.WHITE;

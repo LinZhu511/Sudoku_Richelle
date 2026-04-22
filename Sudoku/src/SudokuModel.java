@@ -10,6 +10,7 @@ import java.io.File;
 
 public class SudokuModel extends Observable {
     private int[][] board = new int[9][9];          // 当前棋盘
+    private int[][] answer = new int[9][9];         // 开局时算出的标准答案
     private boolean[][] isFixed = new boolean[9][9]; // 哪些是题目给的，不能改
     private Stack<Move> undoStack = new Stack<>();  // 存放“小纸条”的抽屉
 
@@ -18,6 +19,10 @@ public class SudokuModel extends Observable {
     private boolean hintsEnabled = true;
     private boolean isRandom = true;
     private final Random random = new Random();
+
+    // 最近一次被玩家（或提示）改动的格子，用于“是谁出的错”的高亮
+    private int lastEditedRow = -1;
+    private int lastEditedCol = -1;
 
     // 构造函数：奶奶一打开游戏，它就先初始化
     public SudokuModel() {
@@ -29,9 +34,12 @@ public class SudokuModel extends Observable {
         for (int r = 0; r < 9; r++) {
             for (int c = 0; c < 9; c++) {
                 board[r][c] = 0;
+                answer[r][c] = 0;
                 isFixed[r][c] = false;
             }
         }
+        lastEditedRow = -1;
+        lastEditedCol = -1;
     }
 
 
@@ -47,14 +55,14 @@ public class SudokuModel extends Observable {
             undoStack.push(new Move(row, col, board[row][col], value));
 
             board[row][col] = value;
+            lastEditedRow = row;
+            lastEditedCol = col;
 
             // 关键：告诉所有 View（GUI 和 CLI），奶奶改数字了，快刷新！
             setChanged();
             notifyObservers();
         }
     }
-
-
 
     public boolean isValid(int row, int col, int val) {
         if (val == 0) return true; // 0 代表清空格子，总是合法的
@@ -88,19 +96,93 @@ public class SudokuModel extends Observable {
         return true; // 三关都过了，它是合法的！
     }
 
+    // ========= 下面是“真正解数独”的求解器，用来给提示提供正确答案 =========
+
+    private boolean isValidInGrid(int[][] grid, int row, int col, int val) {
+        if (val == 0) return true;
+
+        for (int i = 0; i < 9; i++) {
+            if (i != col && grid[row][i] == val) return false;
+            if (i != row && grid[i][col] == val) return false;
+        }
+
+        int boxRowStart = (row / 3) * 3;
+        int boxColStart = (col / 3) * 3;
+        for (int r = boxRowStart; r < boxRowStart + 3; r++) {
+            for (int c = boxColStart; c < boxColStart + 3; c++) {
+                if ((r != row || c != col) && grid[r][c] == val) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    private boolean solveGrid(int[][] grid) {
+        for (int r = 0; r < 9; r++) {
+            for (int c = 0; c < 9; c++) {
+                if (grid[r][c] == 0) {
+                    for (int val = 1; val <= 9; val++) {
+                        if (isValidInGrid(grid, r, c, val)) {
+                            grid[r][c] = val;
+                            if (solveGrid(grid)) {
+                                return true;
+                            }
+                            grid[r][c] = 0;
+                        }
+                    }
+                    return false; // 这个空格无论填什么都不行，回溯
+                }
+            }
+        }
+        return true; // 没有空格了，解出来了
+    }
+
+    private int[][] copyGrid(int[][] src) {
+        int[][] dst = new int[9][9];
+        for (int r = 0; r < 9; r++) {
+            for (int c = 0; c < 9; c++) {
+                dst[r][c] = src[r][c];
+            }
+        }
+        return dst;
+    }
+
+    /**
+     * 从当前棋盘出发，尝试算出一个完整解；若当前盘面已经自相矛盾，则返回 null。
+     */
+    private int[][] solveFromCurrentBoard() {
+        int[][] copy = new int[9][9];
+        for (int r = 0; r < 9; r++) {
+            for (int c = 0; c < 9; c++) {
+                copy[r][c] = board[r][c];
+                int v = copy[r][c];
+                if (v != 0 && !isValidInGrid(copy, r, c, v)) {
+                    return null; // 已经冲突，说明玩家之前的输入有问题
+                }
+            }
+        }
+
+        boolean ok = solveGrid(copy);
+        return ok ? copy : null;
+    }
+
 
     public void hint() {
         if (!hintsEnabled) return; // 如果提示开关没开，就别干活
 
+        int[][] solution = solveFromCurrentBoard();
+        if (solution == null) {
+            // 当前盘面已经无解：说明有格子填错了，这时不给“瞎提示”
+            System.out.println("当前局面已经无解，请先检查红色错误格子。");
+            return;
+        }
+
         for (int r = 0; r < 9; r++) {
             for (int c = 0; c < 9; c++) {
-                if (board[r][c] == 0) { // 找一个还没填数字的空格
-                    for (int val = 1; val <= 9; val++) {
-                        if (isValid(r, c, val)) { // 试出一个合法的数字
-                            setDigit(r, c, val); // 帮奶奶填上
-                            return; // 填一个就够了，收工！
-                        }
-                    }
+                if (board[r][c] == 0 && solution[r][c] != 0) {
+                    setDigit(r, c, solution[r][c]); // 填入真正解里的数字
+                    return; // 只提示一个格子
                 }
             }
         }
@@ -113,6 +195,9 @@ public class SudokuModel extends Observable {
 
             setChanged();
             notifyObservers();
+
+            lastEditedRow = lastMove.getRow();
+            lastEditedCol = lastMove.getCol();
         }
     }
 
@@ -137,6 +222,8 @@ public class SudokuModel extends Observable {
 
             clearBoard();
             undoStack.clear();
+            lastEditedRow = -1;
+            lastEditedCol = -1;
 
             for (int i = 0; i < 81; i++) {
                 int row = i / 9;
@@ -147,6 +234,12 @@ public class SudokuModel extends Observable {
                     board[row][col] = val;
                     isFixed[row][col] = true;
                 }
+            }
+
+            // 题目加载后先求一遍完整解，后续用于“答案驱动判题”
+            int[][] solved = copyGrid(board);
+            if (solveGrid(solved)) {
+                answer = solved;
             }
 
             setChanged();
@@ -163,6 +256,19 @@ public class SudokuModel extends Observable {
 
     public boolean isFixedCell(int row, int col) {
         return isFixed[row][col];
+    }
+
+    public boolean isLastEditedCell(int row, int col) {
+        return row == lastEditedRow && col == lastEditedCol;
+    }
+
+    /** 是否与开局时求出的标准答案不一致（仅玩家可编辑格参与判定） */
+    public boolean isWrongByAnswer(int row, int col) {
+        if (isFixed[row][col]) {
+            return false;
+        }
+        int v = board[row][col];
+        return v != 0 && answer[row][col] != 0 && v != answer[row][col];
     }
 
     public boolean isHighlightErrors() {
