@@ -5,18 +5,31 @@ import java.awt.event.FocusAdapter;
 import java.awt.event.FocusEvent;
 import java.util.Observable;
 import java.util.Observer;
+import java.util.function.Consumer;
 
 @SuppressWarnings("deprecation")
 public class SudokuView extends JFrame implements Observer {
+    public interface CellInputListener {
+        void onCellInput(int row, int col, String text);
+    }
+
     private final SudokuModel model;
     private final JTextField[][] cells = new JTextField[9][9];
     private boolean syncingFromModel;
+    private CellInputListener cellInputListener;
+    private Runnable onNewGame;
+    private Runnable onUndo;
+    private Runnable onHint;
+    private Runnable onReset;
+    private Consumer<Boolean> onValidationToggle;
+    private Consumer<Boolean> onHintToggle;
+    private Consumer<Boolean> onPuzzleSelectionToggle;
 
     public SudokuView(SudokuModel model) {
         this.model = model;
         model.addObserver(this);
 
-        setTitle("数独");
+        setTitle("Sudoku");
         setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
         setLayout(new BorderLayout(8, 8));
 
@@ -51,8 +64,8 @@ public class SudokuView extends JFrame implements Observer {
                         tf.addFocusListener(new FocusAdapter() {
                             @Override
                             public void focusLost(FocusEvent e) {
-                                if (!syncingFromModel) {
-                                    commitCell(fr, fc);
+                                if (!syncingFromModel && cellInputListener != null) {
+                                    cellInputListener.onCellInput(fr, fc, cells[fr][fc].getText());
                                 }
                             }
                         });
@@ -70,72 +83,61 @@ public class SudokuView extends JFrame implements Observer {
     private JPanel buildToolbar() {
         JPanel bar = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 8));
 
-        JButton loadBtn = new JButton("新题目");
-        loadBtn.addActionListener(e -> model.loadPuzzle());
-
-        JButton undoBtn = new JButton("撤销");
-        undoBtn.addActionListener(e -> model.undo());
-
-        JButton hintBtn = new JButton("提示");
-        hintBtn.addActionListener(e -> {
-            model.hint();
-            maybeShowWin();
+        JButton loadBtn = new JButton("New Game");
+        loadBtn.addActionListener(e -> {
+            if (onNewGame != null) onNewGame.run();
         });
 
-        JCheckBox errBox = new JCheckBox("标出错误");
+        JButton undoBtn = new JButton("Undo");
+        undoBtn.addActionListener(e -> {
+            if (onUndo != null) onUndo.run();
+        });
+
+        JButton hintBtn = new JButton("Hint");
+        hintBtn.addActionListener(e -> {
+            if (onHint != null) onHint.run();
+        });
+
+        JButton resetBtn = new JButton("Reset");
+        resetBtn.addActionListener(e -> {
+            if (onReset != null) onReset.run();
+        });
+
+        JCheckBox errBox = new JCheckBox("Highlight Errors");
         errBox.setSelected(model.isHighlightErrors());
-        errBox.addActionListener(e -> model.setHighlightErrors(errBox.isSelected()));
+        errBox.addActionListener(e -> {
+            if (onValidationToggle != null) onValidationToggle.accept(errBox.isSelected());
+        });
 
-        JCheckBox hintBox = new JCheckBox("允许提示");
+        JCheckBox hintBox = new JCheckBox("Enable Hints");
         hintBox.setSelected(model.isHintsEnabled());
-        hintBox.addActionListener(e -> model.setHintsEnabled(hintBox.isSelected()));
+        hintBox.addActionListener(e -> {
+            if (onHintToggle != null) onHintToggle.accept(hintBox.isSelected());
+        });
 
-        JCheckBox randBox = new JCheckBox("随机题目");
+        JCheckBox randBox = new JCheckBox("Random Puzzle");
         randBox.setSelected(model.isRandomPuzzle());
-        randBox.addActionListener(e -> model.setRandomPuzzle(randBox.isSelected()));
+        randBox.addActionListener(e -> {
+            if (onPuzzleSelectionToggle != null) onPuzzleSelectionToggle.accept(randBox.isSelected());
+        });
 
         bar.add(loadBtn);
         bar.add(undoBtn);
         bar.add(hintBtn);
+        bar.add(resetBtn);
         bar.add(errBox);
         bar.add(hintBox);
         bar.add(randBox);
         return bar;
     }
 
-    private void commitCell(int row, int col) {
-        if (model.isFixedCell(row, col)) {
-            return;
-        }
-
-        String t = cells[row][col].getText().trim();
-        int value = 0;
-        if (t.length() == 1) {
-            char ch = t.charAt(0);
-            if (ch >= '1' && ch <= '9') {
-                value = ch - '0';
-            }
-        }
-
-        if (value == 0 && !t.isEmpty()) {
-            refreshFromModel();
-            return;
-        }
-
-        int current = model.getValue(row, col);
-        if (value != current) {
-            model.setDigit(row, col, value);
-        }
-        maybeShowWin();
-    }
-
-    private void maybeShowWin() {
+    public void maybeShowWin() {
         if (model.isSolved()) {
-            JOptionPane.showMessageDialog(this, "恭喜，数独完成！", "完成", JOptionPane.INFORMATION_MESSAGE);
+            JOptionPane.showMessageDialog(this, "Congratulations! Sudoku completed!", "Completed", JOptionPane.INFORMATION_MESSAGE);
         }
     }
 
-    private void refreshFromModel() {
+    public void refreshFromModel() {
         syncingFromModel = true;
         try {
             for (int r = 0; r < 9; r++) {
@@ -154,7 +156,7 @@ public class SudokuView extends JFrame implements Observer {
                             && v != 0
                             && (!model.isValid(r, c, v) || model.isWrongByAnswer(r, c))
                             && model.isLastEditedCell(r, c)) {
-                        // 既标记规则冲突，也标记“当前不冲突但与标准答案不一致”
+                        // Mark both rule conflicts and mismatches against solution
                         bg = new Color(255, 200, 200);
                     } else {
                         bg = Color.WHITE;
@@ -170,5 +172,43 @@ public class SudokuView extends JFrame implements Observer {
     @Override
     public void update(Observable o, Object arg) {
         SwingUtilities.invokeLater(this::refreshFromModel);
+    }
+
+    public void showErrorMessage(String message) {
+        if (message != null && !message.isEmpty()) {
+            JOptionPane.showMessageDialog(this, message, "Notice", JOptionPane.WARNING_MESSAGE);
+        }
+    }
+
+    public void setCellInputListener(CellInputListener cellInputListener) {
+        this.cellInputListener = cellInputListener;
+    }
+
+    public void setOnNewGame(Runnable onNewGame) {
+        this.onNewGame = onNewGame;
+    }
+
+    public void setOnUndo(Runnable onUndo) {
+        this.onUndo = onUndo;
+    }
+
+    public void setOnHint(Runnable onHint) {
+        this.onHint = onHint;
+    }
+
+    public void setOnReset(Runnable onReset) {
+        this.onReset = onReset;
+    }
+
+    public void setOnValidationToggle(Consumer<Boolean> onValidationToggle) {
+        this.onValidationToggle = onValidationToggle;
+    }
+
+    public void setOnHintToggle(Consumer<Boolean> onHintToggle) {
+        this.onHintToggle = onHintToggle;
+    }
+
+    public void setOnPuzzleSelectionToggle(Consumer<Boolean> onPuzzleSelectionToggle) {
+        this.onPuzzleSelectionToggle = onPuzzleSelectionToggle;
     }
 }

@@ -1,0 +1,71 @@
+@startuml
+skinparam classAttributeIconSize 0
+
+class GuiMain {
+  +main(args: String[]): void
+}
+
+class CliMain {
+  +main(args: String[]): void
+}
+
+class Main {
+  +main(args: String[]): void
+}
+
+class SudokuModel {
+  -board: int[][]
+  -initialBoard: int[][]
+  -answer: int[][]
+  -isFixed: boolean[][]
+  -undoStack: Stack<Move>
+  -highlightErrors: boolean
+  -hintsEnabled: boolean
+  -isRandom: boolean
+  +setDigit(row: int, col: int, value: int): void
+  +isValid(row: int, col: int, val: int): boolean
+  +hint(): boolean
+  +undo(): void
+  +reset(): void
+  +loadPuzzle(): void
+  +isSolved(): boolean
+}
+
+class SudokuView {
+  -model: SudokuModel
+  -cells: JTextField[][]
+  +refreshFromModel(): void
+  +update(o: Observable, arg: Object): void
+}
+
+class SudokuController {
+  -model: SudokuModel
+  -view: SudokuView
+}
+
+class SudokuCLI {
+  -model: SudokuModel
+  +run(): void
+}
+
+class Move {
+  -row: int
+  -col: int
+  -oldValue: int
+  -newValue: int
+}
+
+SudokuModel --* Move : records
+SudokuController --> SudokuModel : updates
+SudokuController --> SudokuView : binds events
+SudokuView --> SudokuModel : observes state
+SudokuCLI --> SudokuModel : direct calls
+GuiMain ..> SudokuModel
+GuiMain ..> SudokuView
+GuiMain ..> SudokuController
+CliMain ..> SudokuModel
+CliMain ..> SudokuCLI
+Main ..> GuiMain
+Main ..> CliMain
+
+@enduml

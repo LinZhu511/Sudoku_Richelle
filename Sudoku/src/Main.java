@@ -1,18 +1,9 @@
-import javax.swing.*;
-
 public class Main {
     public static void main(String[] args) {
-        SwingUtilities.invokeLater(() -> {
-            try {
-                UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
-            } catch (Exception ignored) {
-            }
-
-            SudokuModel model = new SudokuModel();
-            model.loadPuzzle();
-
-            SudokuView view = new SudokuView(model);
-            view.setVisible(true);
-        });
+        if (args != null && args.length > 0 && "--cli".equalsIgnoreCase(args[0])) {
+            CliMain.main(new String[0]);
+            return;
+        }
+        GuiMain.main(new String[0]);
     }
 }

@@ -9,24 +9,26 @@ import java.io.IOException;
 import java.io.File;
 
 public class SudokuModel extends Observable {
-    private int[][] board = new int[9][9];          // 当前棋盘
-    private int[][] answer = new int[9][9];         // 开局时算出的标准答案
-    private boolean[][] isFixed = new boolean[9][9]; // 哪些是题目给的，不能改
-    private Stack<Move> undoStack = new Stack<>();  // 存放“小纸条”的抽屉
+    private int[][] board = new int[9][9];          
+    private int[][] initialBoard = new int[9][9];
+    private int[][] answer = new int[9][9];         
+    private boolean[][] isFixed = new boolean[9][9]; 
+    private Stack<Move> undoStack = new Stack<>();  
 
-    // 孙子老师要求的三个布尔标志
+
     private boolean highlightErrors = false;
     private boolean hintsEnabled = true;
     private boolean isRandom = true;
     private final Random random = new Random();
+    private String lastErrorMessage;
 
-    // 最近一次被玩家（或提示）改动的格子，用于“是谁出的错”的高亮
+ 
     private int lastEditedRow = -1;
     private int lastEditedCol = -1;
 
-    // 构造函数：奶奶一打开游戏，它就先初始化
+    // Constructor: initialize game state at startup
     public SudokuModel() {
-        // 暂时先清空棋盘，后面我们会写加载文件的代码
+        // Start with an empty board before loading puzzles
         clearBoard();
     }
 
@@ -34,6 +36,7 @@ public class SudokuModel extends Observable {
         for (int r = 0; r < 9; r++) {
             for (int c = 0; c < 9; c++) {
                 board[r][c] = 0;
+                initialBoard[r][c] = 0;
                 answer[r][c] = 0;
                 isFixed[r][c] = false;
             }
@@ -44,59 +47,55 @@ public class SudokuModel extends Observable {
 
 
     public void setDigit(int row, int col, int value) {
-        // 孙子老师要看的 Assert：确保坐标在 0-8 之间，数字在 0-9 之间
-        assert row >= 0 && row < 9 : "行坐标越界啦";
-        assert col >= 0 && col < 9 : "列坐标越界啦";
-        assert value >= 0 && value <= 9 : "数字必须是0-9";
+    
+        assert row >= 0 && row < 9 : "Row index out of range";
+        assert col >= 0 && col < 9 : "Column index out of range";
+        assert value >= 0 && value <= 9 : "Value must be between 0 and 9";
 
-        // 只有不是原始题目的格子，才允许修改
+        
         if (!isFixed[row][col]) {
-            // 在改数字之前，先写张“小纸条”存进抽屉，方便以后撤销
+        
             undoStack.push(new Move(row, col, board[row][col], value));
 
             board[row][col] = value;
             lastEditedRow = row;
             lastEditedCol = col;
 
-            // 关键：告诉所有 View（GUI 和 CLI），奶奶改数字了，快刷新！
             setChanged();
             notifyObservers();
         }
     }
 
     public boolean isValid(int row, int col, int val) {
-        if (val == 0) return true; // 0 代表清空格子，总是合法的
+        if (val == 0) return true; 
 
-        // 1. 检查行：数数这一行里有没有重复的数字
         for (int i = 0; i < 9; i++) {
             if (i != col && board[row][i] == val) {
-                return false; // 哎呀，行里重复了！
+                return false;
             }
         }
 
-        // 2. 检查列：数数这一列里有没有重复的数字
         for (int i = 0; i < 9; i++) {
             if (i != row && board[i][col] == val) {
-                return false; // 哎呀，列里重复了！
+                return false;
             }
         }
 
-        // 3. 检查 3x3 小方格：这块稍微有点绕，我们要先找到小方格的“左上角”
         int boxRowStart = (row / 3) * 3;
         int boxColStart = (col / 3) * 3;
 
         for (int r = boxRowStart; r < boxRowStart + 3; r++) {
             for (int c = boxColStart; c < boxColStart + 3; c++) {
                 if ((r != row || c != col) && board[r][c] == val) {
-                    return false; // 哎呀，小方格里重复了！
+                    return false;
                 }
             }
         }
 
-        return true; // 三关都过了，它是合法的！
+        return true;
     }
 
-    // ========= 下面是“真正解数独”的求解器，用来给提示提供正确答案 =========
+    // ========= Backtracking solver used by hint generation =========
 
     private boolean isValidInGrid(int[][] grid, int row, int col, int val) {
         if (val == 0) return true;
@@ -131,11 +130,11 @@ public class SudokuModel extends Observable {
                             grid[r][c] = 0;
                         }
                     }
-                    return false; // 这个空格无论填什么都不行，回溯
+                    return false; 
                 }
             }
         }
-        return true; // 没有空格了，解出来了
+        return true; 
     }
 
     private int[][] copyGrid(int[][] src) {
@@ -149,7 +148,8 @@ public class SudokuModel extends Observable {
     }
 
     /**
-     * 从当前棋盘出发，尝试算出一个完整解；若当前盘面已经自相矛盾，则返回 null。
+     * Solve from the current board state. Returns null if the current
+     * board is already contradictory and therefore unsolvable.
      */
     private int[][] solveFromCurrentBoard() {
         int[][] copy = new int[9][9];
@@ -158,7 +158,7 @@ public class SudokuModel extends Observable {
                 copy[r][c] = board[r][c];
                 int v = copy[r][c];
                 if (v != 0 && !isValidInGrid(copy, r, c, v)) {
-                    return null; // 已经冲突，说明玩家之前的输入有问题
+                    return null; // Existing conflict in current board input
                 }
             }
         }
@@ -168,30 +168,30 @@ public class SudokuModel extends Observable {
     }
 
 
-    public void hint() {
-        if (!hintsEnabled) return; // 如果提示开关没开，就别干活
+    public boolean hint() {
+        if (!hintsEnabled) return false;
 
         int[][] solution = solveFromCurrentBoard();
         if (solution == null) {
-            // 当前盘面已经无解：说明有格子填错了，这时不给“瞎提示”
-            System.out.println("当前局面已经无解，请先检查红色错误格子。");
-            return;
+            lastErrorMessage = "The current board is unsolvable.";
+            return false;
         }
 
         for (int r = 0; r < 9; r++) {
             for (int c = 0; c < 9; c++) {
                 if (board[r][c] == 0 && solution[r][c] != 0) {
-                    setDigit(r, c, solution[r][c]); // 填入真正解里的数字
-                    return; // 只提示一个格子
+                    setDigit(r, c, solution[r][c]); 
+                    return true;
                 }
             }
         }
+        return false;
     }
 
     public void undo() {
         if (!undoStack.isEmpty()) {
-            Move lastMove = undoStack.pop(); // 取出最后一张纸条
-            board[lastMove.getRow()][lastMove.getCol()] = lastMove.getOldValue(); // 改回旧值
+            Move lastMove = undoStack.pop(); 
+            board[lastMove.getRow()][lastMove.getCol()] = lastMove.getOldValue(); 
 
             setChanged();
             notifyObservers();
@@ -215,6 +215,7 @@ public class SudokuModel extends Observable {
             }
 
             if (lines.isEmpty()) {
+                lastErrorMessage = "No valid puzzle found in puzzles file.";
                 return;
             }
 
@@ -232,11 +233,12 @@ public class SudokuModel extends Observable {
 
                 if (val >= 1 && val <= 9) {
                     board[row][col] = val;
+                    initialBoard[row][col] = val;
                     isFixed[row][col] = true;
                 }
             }
 
-            // 题目加载后先求一遍完整解，后续用于“答案驱动判题”
+    
             int[][] solved = copyGrid(board);
             if (solveGrid(solved)) {
                 answer = solved;
@@ -246,8 +248,21 @@ public class SudokuModel extends Observable {
             notifyObservers();
 
         } catch (IOException e) {
-            System.out.println("找不到谜题文件： " + e.getMessage());
+            lastErrorMessage = "Unable to load puzzle file: " + e.getMessage();
         }
+    }
+
+    public void reset() {
+        undoStack.clear();
+        for (int r = 0; r < 9; r++) {
+            for (int c = 0; c < 9; c++) {
+                board[r][c] = initialBoard[r][c];
+            }
+        }
+        lastEditedRow = -1;
+        lastEditedCol = -1;
+        setChanged();
+        notifyObservers();
     }
 
     public int getValue(int row, int col) {
@@ -262,7 +277,7 @@ public class SudokuModel extends Observable {
         return row == lastEditedRow && col == lastEditedCol;
     }
 
-    /** 是否与开局时求出的标准答案不一致（仅玩家可编辑格参与判定） */
+    /** Whether an editable cell differs from the solved answer. */
     public boolean isWrongByAnswer(int row, int col) {
         if (isFixed[row][col]) {
             return false;
@@ -297,7 +312,13 @@ public class SudokuModel extends Observable {
         this.isRandom = randomPuzzle;
     }
 
-    /** 棋盘是否已全部填满且每格合法（用于“胜利”判断） */
+    public String consumeLastErrorMessage() {
+        String msg = lastErrorMessage;
+        lastErrorMessage = null;
+        return msg;
+    }
+
+    /** True when board is full and every cell is valid (win condition). */
     public boolean isSolved() {
         for (int r = 0; r < 9; r++) {
             for (int c = 0; c < 9; c++) {
